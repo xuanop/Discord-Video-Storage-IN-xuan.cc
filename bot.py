@@ -296,22 +296,24 @@ class DownloadView(discord.ui.View):
         TASK_STATUS["message"] = f"正在下载媒体 ({mode_text})..."
 
         output_template = os.path.join(CURRENT_DIR, '%(title)s.%(ext)s')
+        import os
+
+        # 明确指定使用 yt_cookies.txt
+        yt_cookies_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'yt_cookies.txt')
+        
         ydl_opts = {
-            'outtmpl': output_template,
-            'nocheckcertificate': True,
-            'force_ipv4': True,
-            'socket_timeout': 60,
+            'format': 'bestvideo+bestaudio/best',
+            'cookiefile': yt_cookies_path,  # 绑定专属的 YouTube Cookie 档案
+            'socket_timeout': 30,
             'retries': 10,
-            'fragment_retries': 10,
-            'ffmpeg_location': FFMPEG_PATH if os.path.exists(FFMPEG_PATH) else None,
-            'extractor-args': {
-                'bilibili': {
-                    'api': ['app', 'web']
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
                 }
             }
         }
 
-        cookie_path = os.path.join(CURRENT_DIR, 'cookies.txt')
+        cookie_path = os.path.join(CURRENT_DIR, 'bili_cookies.txt')
         if os.path.exists(cookie_path):
             ydl_opts['cookiefile'] = cookie_path
 
