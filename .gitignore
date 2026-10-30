@@ -1,0 +1,9 @@
+.env
+token.env
+bot_bridge_status.json
+bot_bridge_command.json
+download_stats.txt
+ffmpeg.exe
+ffprobe.exe
+cookies.txt
+__pycache__/
