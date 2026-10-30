@@ -560,6 +560,19 @@ def api_clear_logs():
         json.dump(cmd, f)
     return jsonify({"success": True})
 
-if __name__ == '__main__':
+import subprocess
+
+# 👉 在啟動網頁 UI 之前，先在背景開啟 bot.py 機器人
+def start_bot_in_background():
+    try:
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        bot_script = os.path.join(current_dir, "bot.py")
+        subprocess.Popen(["python", bot_script])
+        print("✅ 已在背景成功啟動 bot.py 機器人")
+    except Exception as e:
+        print(f"❌ 啟動 bot.py 失敗: {e}")
+
+if __name__ == "__main__":
+    start_bot_in_background() # 自動觸發啟動機器人[cite: 6]
     print("🌐 独立 Novis UI 完整控制台已启动：http://0.0.0.0:5000")
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
