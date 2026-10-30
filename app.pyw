@@ -566,7 +566,7 @@ import time
 import threading
 
 def start_bot_in_background():
-    """在独立线程中持续守护 bot.py，遭遇崩溃自动重启"""
+    """在独立线程中持续守护 bot.py，遭遇 429 限流时自动延长冷却时间"""
     def run_bot():
         current_dir = os.path.dirname(os.path.abspath(__file__))
         bot_script = os.path.join(current_dir, "bot.py")
@@ -574,20 +574,19 @@ def start_bot_in_background():
         while True:
             try:
                 print("🚀 [Bot Guard] 正在启动 bot.py 进程...")
-                # 显式传递当前系统的环境变量（确保 DISCORD_TOKEN 可被读取）
                 process = subprocess.Popen(["python", bot_script], env=os.environ.copy())
-                process.wait() # 等待进程运行
-                print("⚠️ [Bot Guard] bot.py 已退出，将在 10 秒后自动重新启动...")
+                process.wait()
+                print("⚠️ [Bot Guard] bot.py 已退出，将在 60 秒后重新尝试启动...")
             except Exception as e:
                 print(f"❌ [Bot Guard] 启动 bot.py 异常: {e}")
             
-            time.sleep(10) # 冷却 10 秒避免频繁重启触发二次限流
+            # 将冷却时间拉长至 60 秒，避免触发 Discord 429 全球速率限制
+            time.sleep(60)
 
-    # 开启后台守护线程
     guard_thread = threading.Thread(target=run_bot, daemon=True)
     guard_thread.start()
 
 if __name__ == "__main__":
-    start_bot_in_background() # 启动守护线程
+    start_bot_in_background()
     print("🌐 独立 Novis UI 完整控制台已启动：http://0.0.0.0:5000")
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
