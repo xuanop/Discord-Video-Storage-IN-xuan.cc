@@ -5,5 +5,5 @@ bot_bridge_command.json
 download_stats.txt
 ffmpeg.exe
 ffprobe.exe
-cookies.txt
+*_cookies.txt
 __pycache__/
