@@ -561,18 +561,33 @@ def api_clear_logs():
     return jsonify({"success": True})
 
 import subprocess
+import os
+import time
+import threading
 
-# 👉 在啟動網頁 UI 之前，先在背景開啟 bot.py 機器人
 def start_bot_in_background():
-    try:
+    """在独立线程中持续守护 bot.py，遭遇崩溃自动重启"""
+    def run_bot():
         current_dir = os.path.dirname(os.path.abspath(__file__))
         bot_script = os.path.join(current_dir, "bot.py")
-        subprocess.Popen(["python", bot_script])
-        print("✅ 已在背景成功啟動 bot.py 機器人")
-    except Exception as e:
-        print(f"❌ 啟動 bot.py 失敗: {e}")
+        
+        while True:
+            try:
+                print("🚀 [Bot Guard] 正在启动 bot.py 进程...")
+                # 显式传递当前系统的环境变量（确保 DISCORD_TOKEN 可被读取）
+                process = subprocess.Popen(["python", bot_script], env=os.environ.copy())
+                process.wait() # 等待进程运行
+                print("⚠️ [Bot Guard] bot.py 已退出，将在 10 秒后自动重新启动...")
+            except Exception as e:
+                print(f"❌ [Bot Guard] 启动 bot.py 异常: {e}")
+            
+            time.sleep(10) # 冷却 10 秒避免频繁重启触发二次限流
+
+    # 开启后台守护线程
+    guard_thread = threading.Thread(target=run_bot, daemon=True)
+    guard_thread.start()
 
 if __name__ == "__main__":
-    start_bot_in_background() # 自動觸發啟動機器人[cite: 6]
+    start_bot_in_background() # 启动守护线程
     print("🌐 独立 Novis UI 完整控制台已启动：http://0.0.0.0:5000")
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
