@@ -77,3 +77,4 @@ wxpy==0.3.9.8
 xmltodict==1.0.4
 yarl==1.25.1
 yt-dlp==2026.10.26
+python-dotenv==1.2.4
