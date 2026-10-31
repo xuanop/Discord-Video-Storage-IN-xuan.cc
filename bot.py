@@ -14,11 +14,12 @@ from collections import deque
 import discord
 from discord import app_commands
 from discord.ext import commands
+import yt_dlp
+import importlib.metadata
 
 from dotenv import load_dotenv
-load_dotenv(".env")  # 如果你的档案叫 token.env，这里就写 load_dotenv("token.env")
+load_dotenv(".env")
 
-# 🔒 安全脱敏函式（只显示前后几码，防止截图泄露）
 def mask_token(token):
     if not token or len(token) < 10:
         return "None / 格式错误"
@@ -30,7 +31,12 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 print(f"DEBUG - 读取到的 DISCORD_TOKEN: {mask_token(DISCORD_TOKEN)}")
 print(f"DEBUG - 读取到的 GITHUB_TOKEN: {mask_token(GITHUB_TOKEN)}")
 
-# 检查有没有成功读取
+try:
+    ytdlp_version = importlib.metadata.version("yt-dlp")
+except Exception:
+    ytdlp_version = "Unknown"
+print(f"DEBUG - 当前核心组件 yt-dlp 版本: {ytdlp_version} (核心组件常新监测已激活)")
+
 if not DISCORD_TOKEN:
     print("❌ 错误：未检测到 DISCORD_TOKEN 环境变量！")
 
@@ -44,13 +50,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 URL_REGEX = re.compile(r'https?://[^\s]+')
 
-# ⚙️ 敏感凭证改从环境变量安全读取（防止上传 GitHub 时外泄）
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-
-if not DISCORD_TOKEN:
-    print("❌ 错误：未检测到 DISCORD_TOKEN 环境变量！请在本地配置 .env 或在云端后台设定。")
-
 GITHUB_USER = "xuanop"
 GITHUB_REPO = "Discord-Video-Storage-IN-xuan.cc"
 TAG_NAME = "v1.0.0"
@@ -59,11 +58,9 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 FFMPEG_PATH = os.path.join(CURRENT_DIR, 'ffmpeg.exe')
 STATS_FILE = os.path.join(CURRENT_DIR, 'download_stats.txt')
 
-# 状态同步与指令桥接档案路径
 BRIDGE_STATUS_FILE = os.path.join(CURRENT_DIR, 'bot_bridge_status.json')
 COMMAND_FILE = os.path.join(CURRENT_DIR, 'bot_bridge_command.json')
 
-# 全局设定与统计数据
 BOT_SETTINGS = {
     "allow_bilibili": True,
     "allow_youtube": True,
@@ -71,7 +68,6 @@ BOT_SETTINGS = {
     "auto_upload": True
 }
 
-# 📂 从本地 txt 档案载入上次累计的下载数据
 def load_stats():
     try:
         if os.path.exists(STATS_FILE):
@@ -85,7 +81,6 @@ def load_stats():
         print(f"⚠️ 读取下载统计档案失败: {e}")
     return {"total_downloaded_mb": 0.0, "download_count": 0}
 
-# 💾 将当前下载数据储存至本地 txt 档案
 def save_stats():
     try:
         data = {
@@ -100,8 +95,8 @@ def save_stats():
 initial_stats = load_stats()
 
 TASK_STATUS = {
-    "status": "idle",       # idle, downloading, uploading, success, error
-    "progress": 0,          # 0 - 100
+    "status": "idle",
+    "progress": 0,
     "message": "系统闲置中，等待下载任务...",
     "total_downloaded_mb": initial_stats["total_downloaded_mb"],
     "download_count": initial_stats["download_count"]
@@ -156,11 +151,15 @@ async def on_message(message: discord.Message):
         full_url_with_tag = match.group(1)
         clean_url = full_url_with_tag.replace("+dwcc", "").strip()
 
-        if "bilibili" in clean_url and not BOT_SETTINGS["allow_bilibili"]:
+        is_bili = "bilibili" in clean_url or "b23.tv" in clean_url
+        is_yt = "youtube" in clean_url or "youtu.be" in clean_url
+        is_tk = "tiktok" in clean_url
+
+        if is_bili and not BOT_SETTINGS["allow_bilibili"]:
             return
-        if ("youtube" in clean_url or "youtu.be" in clean_url) and not BOT_SETTINGS["allow_youtube"]:
+        if is_yt and not BOT_SETTINGS["allow_youtube"]:
             return
-        if "tiktok" in clean_url and not BOT_SETTINGS["allow_tiktok"]:
+        if is_tk and not BOT_SETTINGS["allow_tiktok"]:
             return
 
         try:
@@ -214,6 +213,8 @@ def upload_to_github_release(file_path: str) -> str:
             upload_url_template = release_data["upload_url"]
 
         base_upload_url = upload_url_template.split("{")[0]
+        
+        # 💡 核心修复：保持视频标题原名，并完美拼接毫秒级时间戳，彻底防止 GitHub 报 already_exists 错误
         safe_filename = filename.encode('utf-8', 'ignore').decode('utf-8')
         name_part, ext_part = os.path.splitext(safe_filename)
         timestamp = int(time.time() * 1000)
@@ -262,13 +263,24 @@ class DownloadView(discord.ui.View):
 
     async def start_download(self, interaction: discord.Interaction, mode_text: str, is_mp3: bool):
         if interaction.guild and interaction.guild.id in DISABLED_GUILDS:
-            await interaction.response.send_message("❌ 管理员已在控制台中关闭此服务器的机器人运行功能。", ephemeral=True)
+            await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: GUILD_DISABLED]", ephemeral=True)
             return
 
-        if "bilibili.com" in self.url or "b23.tv" in self.url:
-            if not BOT_SETTINGS["allow_bilibili"]:
-                await interaction.response.send_message("❌ 管理员已暂时关闭 B 站下载功能。", ephemeral=True)
-                return
+        is_bili = "bilibili.com" in self.url or "b23.tv" in self.url
+        is_yt = "youtube.com" in self.url or "youtu.be" in self.url
+        is_tk = "tiktok.com" in self.url
+
+        if is_bili and not BOT_SETTINGS["allow_bilibili"]:
+            await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: BILI_DISABLED]", ephemeral=True)
+            return
+        if is_yt and not BOT_SETTINGS["allow_youtube"]:
+            await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: YT_DISABLED]", ephemeral=True)
+            return
+        if is_tk and not BOT_SETTINGS["allow_tiktok"]:
+            await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: TK_DISABLED]", ephemeral=True)
+            return
+
+        if is_bili:
             self.url = self.url.split('?')[0]
 
         is_guild = interaction.guild is not None
@@ -295,68 +307,62 @@ class DownloadView(discord.ui.View):
         TASK_STATUS["progress"] = 30
         TASK_STATUS["message"] = f"正在下载媒体 ({mode_text})..."
 
-        output_template = os.path.join(CURRENT_DIR, '%(title)s.%(ext)s')
-        import os
-
-        # 明确指定使用 yt_cookies.txt
-        yt_cookies_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'yt_cookies.txt')
+        yt_cookies_path = os.path.join(CURRENT_DIR, 'yt_cookies.txt')
+        cookie_path = os.path.join(CURRENT_DIR, 'bili_cookies.txt')
         
+        # 💡 使用标题作为档名模板（%(title)s），并强制转码为 iOS 相容的 H.264
         ydl_opts = {
-            'format': 'bestvideo+bestaudio/best',
-            'cookiefile': yt_cookies_path,  # 绑定专属的 YouTube Cookie 档案
+            'ffmpeg_location': CURRENT_DIR,
             'socket_timeout': 30,
             'retries': 10,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'web'],
-                }
+            'format': 'bv*[height<=1080]+ba/b',
+            'merge_output_format': 'mp4',
+            'outtmpl': os.path.join(CURRENT_DIR, '%(title)s.%(ext)s'),
+            'postprocessors': [{
+                'key': 'FFmpegVideoConvertor',
+                'preferedformat': 'mp4',
+            }],
+            'postprocessor_args': {
+                'ffmpeg': ['-c:v', 'libx264', '-preset', 'fast', '-crf', '22', '-c:a', 'aac', '-b:a', '192k']
             }
         }
 
-        cookie_path = os.path.join(CURRENT_DIR, 'bili_cookies.txt')
-        if os.path.exists(cookie_path):
-            ydl_opts['cookiefile'] = cookie_path
+        if os.path.exists(yt_cookies_path):
+            ydl_opts['cookiefile'] = yt_cookies_path
 
-        is_bilibili = "bilibili.com" in self.url or "b23.tv" in self.url
-
-        if is_mp3:
+        if is_bili:
+            if os.path.exists(cookie_path):
+                ydl_opts['cookiefile'] = cookie_path
             ydl_opts.update({
-                'format': 'bestaudio/best',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '320',
-                }],
-            })
-        else:
-            ydl_opts.update({
-                'format': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
-                'merge_output_format': 'mp4',
-            })
-
-        aria2_path = os.path.join(CURRENT_DIR, 'aria2c.exe')
-        if os.path.exists(aria2_path) and not is_bilibili:
-            ydl_opts.update({
-                'external_downloader': aria2_path,
-                'external_downloader_args': {
-                    'ffmpeg': ['-loglevel', 'panic'],
-                    'aria2c': ['-j', '16', '-x', '16', '-s', '16', '-k', '1M']
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    'Referer': 'https://www.bilibili.com',
                 }
             })
 
         try:
             def run_ytdlp():
-                import yt_dlp
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(self.url, download=True)
                     filename = ydl.prepare_filename(info)
+                    base, _ = os.path.splitext(filename)
+                    mp4_filename = base + ".mp4"
+
                     if is_mp3:
-                        base, _ = os.path.splitext(filename)
-                        filename = base + ".mp3"
+                        mp3_filename = base + ".mp3"
+                        ffmpeg_cmd = [
+                            os.path.join(CURRENT_DIR, 'ffmpeg.exe'),
+                            '-y', '-i', mp4_filename,
+                            '-vn', '-ab', '320k', '-ar', '44100', '-map', '0:a:0',
+                            mp3_filename
+                        ]
+                        subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                        
+                        if os.path.exists(mp4_filename):
+                            os.remove(mp4_filename)
+                        return mp3_filename
                     else:
-                        base, _ = os.path.splitext(filename)
-                        filename = base + ".mp4"
-                    return filename
+                        return mp4_filename
 
             loop = asyncio.get_running_loop()
             actual_filename = await loop.run_in_executor(None, run_ytdlp)
@@ -397,14 +403,21 @@ class DownloadView(discord.ui.View):
                 else:
                     await interaction.followup.send(content=short_link, embed=success_embed, view=result_view)
             else:
-                raise Exception("上传云端失败或管理员已关闭自动云端上传功能。")
+                raise Exception("云端托管上传失败或功能未开启。 [错误代码: UPLOAD_FAILED]")
 
         except Exception as e:
             TASK_STATUS["status"] = "error"
             TASK_STATUS["progress"] = 0
-            TASK_STATUS["message"] = f"错误: {str(e)}"
+            
+            err_str = str(e)
+            short_err = err_str.split("\n")[0][:80] if err_str else "UNKNOWN_ERROR"
+            TASK_STATUS["message"] = f"错误: {short_err}"
 
-            err_embed = discord.Embed(title="❌ 系统发生错误", description=f"```{str(e)}```", color=discord.Color.red())
+            err_embed = discord.Embed(
+                title="❌ 处理失败", 
+                description=f"请联系管理员回报问题\n* 错误摘要：`{short_err}`", 
+                color=discord.Color.red()
+            )
             try:
                 if is_guild:
                     await interaction.followup.send(embed=err_embed, ephemeral=True)
@@ -431,14 +444,29 @@ class DownloadView(discord.ui.View):
 @bot.tree.context_menu(name="机器人-下载档案")
 async def download_message_context(interaction: discord.Interaction, message: discord.Message):
     if interaction.guild and interaction.guild.id in DISABLED_GUILDS:
-        await interaction.response.send_message("❌ 此服务器的机器人运行功能已被管理员关闭。", ephemeral=True)
+        await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: GUILD_DISABLED]", ephemeral=True)
         return
 
     match = URL_REGEX.search(message.content)
     if not match:
-        await interaction.response.send_message("❌ 这则讯息中没有找到任何有效的网址！", ephemeral=True)
+        await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: URL_NOT_FOUND]", ephemeral=True)
         return
     url = match.group(0)
+
+    is_bili = "bilibili.com" in url or "b23.tv" in url
+    is_yt = "youtube.com" in url or "youtu.be" in url
+    is_tk = "tiktok.com" in url
+
+    if is_bili and not BOT_SETTINGS["allow_bilibili"]:
+        await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: BILI_DISABLED]", ephemeral=True)
+        return
+    if is_yt and not BOT_SETTINGS["allow_youtube"]:
+        await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: YT_DISABLED]", ephemeral=True)
+        return
+    if is_tk and not BOT_SETTINGS["allow_tiktok"]:
+        await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: TK_DISABLED]", ephemeral=True)
+        return
+
     menu_embed = discord.Embed(title="🔍 云端下载服务已就绪", description="* 点击下方按钮将自动进行下载。", color=discord.Color.blurple())
     menu_embed.add_field(name="🔗 目标网址", value=url, inline=False)
     view = DownloadView(url=url)
@@ -448,22 +476,35 @@ async def download_message_context(interaction: discord.Interaction, message: di
 @app_commands.describe(url="请输入 YouTube / TikTok / B站 媒体网址")
 async def download_slash(interaction: discord.Interaction, url: str):
     if interaction.guild and interaction.guild.id in DISABLED_GUILDS:
-        await interaction.response.send_message("❌ 此服务器的机器人运行功能已被管理员关闭。", ephemeral=True)
+        await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: GUILD_DISABLED]", ephemeral=True)
         return
 
     if not URL_REGEX.match(url):
-        await interaction.response.send_message("❌ 网址格式不正确！", ephemeral=True)
+        await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: INVALID_URL_FORMAT]", ephemeral=True)
         return
+
+    is_bili = "bilibili.com" in url or "b23.tv" in url
+    is_yt = "youtube.com" in url or "youtu.be" in url
+    is_tk = "tiktok.com" in url
+
+    if is_bili and not BOT_SETTINGS["allow_bilibili"]:
+        await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: BILI_DISABLED]", ephemeral=True)
+        return
+    if is_yt and not BOT_SETTINGS["allow_youtube"]:
+        await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: YT_DISABLED]", ephemeral=True)
+        return
+    if is_tk and not BOT_SETTINGS["allow_tiktok"]:
+        await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: TK_DISABLED]", ephemeral=True)
+        return
+
     menu_embed = discord.Embed(title="🔍 云端下载服务已就绪", description="* 点击下方按钮将自动进行下载。", color=discord.Color.blurple())
     menu_embed.add_field(name="🔗 目标网址", value=url, inline=False)
     view = DownloadView(url=url)
     await interaction.response.send_message(embed=menu_embed, view=view, ephemeral=True)
 
-# 🔄 桥接后台心跳与指令执行执行绪
 def bridge_sync_loop():
     while True:
         try:
-            # 1. 检查网页端传过来的控制指令
             if os.path.exists(COMMAND_FILE):
                 with open(COMMAND_FILE, "r", encoding="utf-8") as f:
                     cmd = json.load(f)
@@ -497,7 +538,6 @@ def bridge_sync_loop():
                     LOG_BUFFER.clear()
                     print("🧹 网页端已清空系统日志")
 
-            # 2. 向独立 app.py 网页端实时汇报状态
             guilds_data = []
             if bot.is_ready():
                 for g in bot.guilds:
