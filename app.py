@@ -5,6 +5,17 @@ from flask import Flask, render_template_string, request, jsonify
 
 app = Flask(__name__)
 
+# 💡 定制日志过滤器：彻底屏蔽高频的 /api/data 访问日志
+class IgnoreApiDataFilter(logging.Filter):
+    def filter(self, record):
+        # 如果日志内容包含 /api/data，则将其过滤掉不予显示
+        return "/api/data" not in record.getMessage()
+
+# 将过滤器应用到 Werkzeug 日志记录器
+werkzeug_logger = logging.getLogger('werkzeug')
+werkzeug_logger.setLevel(logging.INFO)
+werkzeug_logger.addFilter(IgnoreApiDataFilter())
+
 # 指向与 bot.py 共用的状态通讯档案
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 STATUS_FILE = os.path.join(CURRENT_DIR, 'bot_bridge_status.json')
