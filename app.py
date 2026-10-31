@@ -574,7 +574,7 @@ def start_bot_in_background():
         while True:
             try:
                 print("🚀 [Bot Guard] 正在启动 bot.py 进程...")
-                process = subprocess.Popen(["python", bot_script], env=os.environ.copy())
+                process = subprocess.Popen(["python3", bot_script], env=os.environ.copy())
                 process.wait()
                 print("⚠️ [Bot Guard] bot.py 已退出，将在 60 秒后重新尝试启动...")
             except Exception as e:
