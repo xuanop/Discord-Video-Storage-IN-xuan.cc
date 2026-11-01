@@ -34,7 +34,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # 升级到 3.11 消除警告
+          python-version: '3.11'
 
       - name: Install system and python dependencies
         run: |
@@ -43,8 +43,15 @@ jobs:
 
       - name: Make Cookies File from Secrets
         run: |
-          # 写入前清理可能存在的首尾空白符或引号
-          echo "${{ secrets.YT_COOKIES }}" | sed 's/^[ \t]*//;s/[ \t]*$//' > cookies.txt
+          # 1. 写入 Secrets 中的 Cookie 内容
+          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+          # 2. 核心优化：自动抹除 Windows 回车符 (\r)，防止 yt-dlp 报 Netscape 格式错误
+          tr -d '\r' < cookies.txt > cookies_clean.txt && mv cookies_clean.txt cookies.txt
+          # 3. 简单校验文件是否存在且不为空
+          if [ ! -s cookies.txt ]; then
+            echo "Error: cookies.txt is empty!"
+            exit 1
+          fi
 
       - name: Download media using yt-dlp
         id: download_step
@@ -133,7 +140,7 @@ jobs:
               }
           else:
               payload = {
-                  'content': f'❌ **下载或处理失败！**\n可能原因：Cookie 格式错误、链接失效、或平台触发了反爬验证。'
+                  'content': f'❌ **下载或处理失败！**\n可能原因：Cookie 内容有误、链接失效、或平台触发了反爬验证。'
               }
 
           req = urllib.request.Request(
