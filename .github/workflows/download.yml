@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 强制安装并检查 FFmpeg
+      - name: 安装并验证 FFmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
@@ -35,7 +35,7 @@ jobs:
         run: |
           echo "${{ secrets.BILI_COOKIE }}" > bili_cookies.txt
 
-      - name: 执行 yt-dlp 云端下载与 H.264 重新编码
+      - name: 执行 yt-dlp 原画云端下载与高画质合流
         run: |
           python -c "
           import yt_dlp, os
@@ -46,18 +46,20 @@ jobs:
           ydl_opts = {
               'format': 'bestvideo+bestaudio/best',
               'cookiefile': 'bili_cookies.txt',
+              'merge_output_format': 'mp4',
               'postprocessors': [{
                   'key': 'FFmpegVideoConvertor',
                   'preferedformat': 'mp4',
               }],
               'postprocessor_args': {
-                  'ffmpeg': ['-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p']
+                  'ffmpeg': ['-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p', '-crf', '20']
               },
               'outtmpl': os.path.join('downloads', filename),
               'ffmpeg_args': ['-y'],
               'http_headers': {
                   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                   'Referer': 'https://www.bilibili.com',
+                  'Accept-Language': 'zh-CN,zh;q=0.9',
               }
           }
           with yt_dlp.YoutubeDL(ydl_opts) as ydl:
