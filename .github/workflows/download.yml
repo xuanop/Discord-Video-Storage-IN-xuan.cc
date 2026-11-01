@@ -31,10 +31,9 @@ jobs:
           ffmpeg -version
           pip install --upgrade yt-dlp requests
 
-      - name: 写入并修复 Bilibili Cookie 格式
+      - name: 写入完整的 Netscape Cookie
         run: |
-          echo "# Netscape HTTP Cookie File" > bili_cookies.txt
-          echo ".bilibili.com	TRUE	/	TRUE	2147483647	SESSDATA	${{ secrets.BILI_COOKIE }}" >> bili_cookies.txt
+          echo "${{ secrets.BILI_COOKIE }}" > bili_cookies.txt
 
       - name: 执行 yt-dlp 原画云端下载与高画质合流
         run: |
@@ -45,6 +44,7 @@ jobs:
           os.makedirs('downloads', exist_ok=True)
           
           ydl_opts = {
+              # 强制拉满：自动抓取最高画质视频轨 + 最高音质音频轨
               'format': 'bestvideo+bestaudio/best',
               'cookiefile': 'bili_cookies.txt',
               'merge_output_format': 'mp4',
@@ -53,7 +53,7 @@ jobs:
                   'preferedformat': 'mp4',
               }],
               'postprocessor_args': {
-                  'ffmpeg': ['-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p', '-crf', '20']
+                  'ffmpeg': ['-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p', '-crf', '18']
               },
               'outtmpl': os.path.join('downloads', filename),
               'ffmpeg_args': ['-y'],
