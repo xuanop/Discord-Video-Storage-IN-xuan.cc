@@ -14,7 +14,6 @@ from collections import deque
 import discord
 from discord import app_commands
 from discord.ext import commands
-import yt_dlp
 import importlib.metadata
 
 from dotenv import load_dotenv
@@ -30,12 +29,6 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 print(f"DEBUG - 读取到的 DISCORD_TOKEN: {mask_token(DISCORD_TOKEN)}")
 print(f"DEBUG - 读取到的 GITHUB_TOKEN: {mask_token(GITHUB_TOKEN)}")
-
-try:
-    ytdlp_version = importlib.metadata.version("yt-dlp")
-except Exception:
-    ytdlp_version = "Unknown"
-print(f"DEBUG - 当前核心组件 yt-dlp 版本: {ytdlp_version} (核心组件常新监测已激活)")
 
 if not DISCORD_TOKEN:
     print("❌ 错误：未检测到 DISCORD_TOKEN 环境变量！")
@@ -55,7 +48,6 @@ GITHUB_REPO = "Discord-Video-Storage-IN-xuan.cc"
 TAG_NAME = "v1.0.0"
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-FFMPEG_PATH = os.path.join(CURRENT_DIR, 'ffmpeg.exe')
 STATS_FILE = os.path.join(CURRENT_DIR, 'download_stats.txt')
 
 BRIDGE_STATUS_FILE = os.path.join(CURRENT_DIR, 'bot_bridge_status.json')
@@ -123,7 +115,7 @@ sys.stderr = StdoutRedirector(sys.stderr)
 
 @bot.event
 async def on_ready():
-    print(f"✨ 官方影音下载机器人已上线：{bot.user}")
+    print(f"✨ 官方影音下载机器人（GitHub Actions 远端云端驱动）已上线：{bot.user}")
 
 @bot.event
 async def on_guild_join(guild):
@@ -165,7 +157,7 @@ async def on_message(message: discord.Message):
         try:
             menu_embed = discord.Embed(
                 title="🔍 自动侦测云端下载服务",
-                description="已成功自动侦测到网址！\n* 点击下方按钮将直接进行下载与云端托管。",
+                description="已成功自动侦测到网址！\n* 点击下方按钮将触发 GitHub Actions 云端进行下载与转码。",
                 color=discord.Color.blurple()
             )
             menu_embed.add_field(name="🔗 目标网址", value=clean_url, inline=False)
@@ -181,62 +173,30 @@ async def on_message(message: discord.Message):
 
     await bot.process_commands(message)
 
-def upload_to_github_release(file_path: str) -> str:
-    filename = os.path.basename(file_path)
+def trigger_github_action(video_url: str) -> bool:
+    """通过 GitHub API 远程触发 Actions 工作流"""
+    url = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/actions/workflows/download.yml/dispatches"
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github+json"
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
+    }
+    payload = {
+        "ref": "main",
+        "inputs": {
+            "video_url": video_url
+        }
     }
     try:
         TASK_STATUS["status"] = "uploading"
-        TASK_STATUS["progress"] = 75
-        TASK_STATUS["message"] = f"正在将档案上传至 GitHub 云端..."
-
-        release_url = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/releases/tags/{TAG_NAME}"
-        resp = requests.get(release_url, headers=headers)
+        TASK_STATUS["progress"] = 50
+        TASK_STATUS["message"] = f"正在触发 GitHub Actions 云端任务..."
         
-        if resp.status_code == 200:
-            release_data = resp.json()
-            upload_url_template = release_data["upload_url"]
-        else:
-            create_url = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/releases"
-            payload = {
-                "tag_name": TAG_NAME,
-                "name": "Discord Bot Video Storage",
-                "body": "Automated video storage for Discord media downloader bot."
-            }
-            create_resp = requests.post(create_url, headers=headers, json=payload)
-            if create_resp.status_code != 201:
-                print(f"建立 GitHub Release 失败: {create_resp.text}")
-                return None
-            release_data = create_resp.json()
-            upload_url_template = release_data["upload_url"]
-
-        base_upload_url = upload_url_template.split("{")[0]
-        
-        # 💡 核心修复：保持视频标题原名，并完美拼接毫秒级时间戳，彻底防止 GitHub 报 already_exists 错误
-        safe_filename = filename.encode('utf-8', 'ignore').decode('utf-8')
-        name_part, ext_part = os.path.splitext(safe_filename)
-        timestamp = int(time.time() * 1000)
-        safe_filename = f"{name_part}_{timestamp}{ext_part}"
-
-        content_type = "audio/mpeg" if safe_filename.endswith(".mp3") else "video/mp4"
-        with open(file_path, "rb") as f:
-            file_data = f.read()
-
-        upload_headers = headers.copy()
-        upload_headers["Content-Type"] = content_type
-        params = {"name": safe_filename}
-        
-        upload_resp = requests.post(base_upload_url, headers=upload_headers, params=params, data=file_data, timeout=300)
-        if upload_resp.status_code == 201:
-            asset_data = upload_resp.json()
-            return asset_data.get("browser_download_url")
-        else:
-            print(f"上传档案至云端失败: {upload_resp.text}")
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        return response.status_code == 204
     except Exception as e:
-        print(f"云端上传例外错误: {e}")
-    return None
+        print(f"触发 GitHub Actions 异常: {e}")
+        return False
 
 def shorten_url(long_url: str) -> str:
     try:
@@ -253,13 +213,12 @@ def shorten_url(long_url: str) -> str:
 class DownloadResultView(discord.ui.View):
     def __init__(self, download_url: str):
         super().__init__(timeout=None)
-        self.add_item(discord.ui.Button(label="📥 点击下载档案", style=discord.ButtonStyle.link, url=download_url))
+        self.add_item(discord.ui.Button(label="📥 前往 GitHub Releases 获取档案", style=discord.ButtonStyle.link, url=download_url))
 
 class DownloadView(discord.ui.View):
     def __init__(self, url: str):
         super().__init__(timeout=120)
         self.url = url
-        self.downloaded_file_path = None
 
     async def start_download(self, interaction: discord.Interaction, mode_text: str, is_mp3: bool):
         if interaction.guild and interaction.guild.id in DISABLED_GUILDS:
@@ -290,11 +249,10 @@ class DownloadView(discord.ui.View):
             await interaction.response.defer(thinking=True)
         
         loading_embed = discord.Embed(
-            title="⏳ 影音任务处理中...",
-            description=f"进度：`正在下载 {mode_text}`\n请稍候...",
+            title="⏳ 正在呼叫 GitHub 云端服务...",
+            description=f"模式：`{mode_text}`\n正在向云端派发下载任务，请稍候...",
             color=discord.Color.gold()
         )
-        loading_embed.add_field(name="⚙️ 处理模式", value=mode_text, inline=True)
         
         for child in self.children:
             child.disabled = True
@@ -303,107 +261,36 @@ class DownloadView(discord.ui.View):
         except:
             pass
 
-        TASK_STATUS["status"] = "downloading"
-        TASK_STATUS["progress"] = 30
-        TASK_STATUS["message"] = f"正在下载媒体 ({mode_text})..."
-
-        yt_cookies_path = os.path.join(CURRENT_DIR, 'yt_cookies.txt')
-        cookie_path = os.path.join(CURRENT_DIR, 'bili_cookies.txt')
-        
-        # 💡 使用标题作为档名模板（%(title)s），并强制转码为 iOS 相容的 H.264
-        ydl_opts = {
-            'ffmpeg_location': CURRENT_DIR,
-            'socket_timeout': 30,
-            'retries': 10,
-            'format': 'bv*[height<=1080]+ba/b',
-            'merge_output_format': 'mp4',
-            'outtmpl': os.path.join(CURRENT_DIR, '%(title)s.%(ext)s'),
-            'postprocessors': [{
-                'key': 'FFmpegVideoConvertor',
-                'preferedformat': 'mp4',
-            }],
-            'postprocessor_args': {
-                'ffmpeg': ['-c:v', 'libx264', '-preset', 'fast', '-crf', '22', '-c:a', 'aac', '-b:a', '192k']
-            }
-        }
-
-        if os.path.exists(yt_cookies_path):
-            ydl_opts['cookiefile'] = yt_cookies_path
-
-        if is_bili:
-            if os.path.exists(cookie_path):
-                ydl_opts['cookiefile'] = cookie_path
-            ydl_opts.update({
-                'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                    'Referer': 'https://www.bilibili.com',
-                }
-            })
-
         try:
-            def run_ytdlp():
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(self.url, download=True)
-                    filename = ydl.prepare_filename(info)
-                    base, _ = os.path.splitext(filename)
-                    mp4_filename = base + ".mp4"
-
-                    if is_mp3:
-                        mp3_filename = base + ".mp3"
-                        ffmpeg_cmd = [
-                            os.path.join(CURRENT_DIR, 'ffmpeg.exe'),
-                            '-y', '-i', mp4_filename,
-                            '-vn', '-ab', '320k', '-ar', '44100', '-map', '0:a:0',
-                            mp3_filename
-                        ]
-                        subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                        
-                        if os.path.exists(mp4_filename):
-                            os.remove(mp4_filename)
-                        return mp3_filename
-                    else:
-                        return mp4_filename
-
             loop = asyncio.get_running_loop()
-            actual_filename = await loop.run_in_executor(None, run_ytdlp)
+            success = await loop.run_in_executor(None, trigger_github_action, self.url)
 
-            if not actual_filename or not os.path.exists(actual_filename):
-                raise FileNotFoundError("找不到下载完成的媒体档案。")
+            if not success:
+                raise Exception("无法成功触发 GitHub Actions 云端任务 [错误代码: TRIGGER_FAILED]")
 
-            self.downloaded_file_path = actual_filename
-            file_size_mb = os.path.getsize(actual_filename) / (1024 * 1024)
-
-            TASK_STATUS["total_downloaded_mb"] += file_size_mb
+            TASK_STATUS["status"] = "success"
+            TASK_STATUS["progress"] = 100
+            TASK_STATUS["message"] = "云端任务已派发成功！"
             TASK_STATUS["download_count"] += 1
             save_stats()
 
-            github_url = None
-            if BOT_SETTINGS["auto_upload"]:
-                github_url = await loop.run_in_executor(None, upload_to_github_release, actual_filename)
-            
-            if github_url:
-                short_link = shorten_url(github_url)
-                await asyncio.sleep(1)
+            releases_url = f"https://github.com/{GITHUB_USER}/{GITHUB_REPO}/releases/tag/{TAG_NAME}"
+            short_link = shorten_url(releases_url)
+            await asyncio.sleep(1)
 
-                TASK_STATUS["status"] = "success"
-                TASK_STATUS["progress"] = 100
-                TASK_STATUS["message"] = f"任务完成！档案大小: {file_size_mb:.2f} MB"
-                
-                success_embed = discord.Embed(
-                    title="🎉 云端托管成功！",
-                    description=f"已成功完成处理，并上传至云端。\n🔗 档案下载链接：{short_link}",
-                    color=discord.Color.green()
-                )
-                success_embed.add_field(name="📄 处理模式", value=f"`{mode_text}`", inline=False)
-                success_embed.add_field(name="📊 档案大小", value=f"{file_size_mb:.2f} MB", inline=True)
-                
-                result_view = DownloadResultView(short_link)
-                if is_guild:
-                    await interaction.followup.send(content=short_link, embed=success_embed, view=result_view, ephemeral=True)
-                else:
-                    await interaction.followup.send(content=short_link, embed=success_embed, view=result_view)
+            success_embed = discord.Embed(
+                title="🚀 云端下载任务已提交！",
+                description=f"视频正在由 GitHub 虚拟机高速下载与转码中。\n* 请等待 **30 秒 - 1 分钟** 后，点击下方链接前往 Releases 页面下载：",
+                color=discord.Color.green()
+            )
+            success_embed.add_field(name="🔗 GitHub Releases 页面", value=short_link, inline=False)
+            success_embed.add_field(name="📄 处理模式", value=f"`{mode_text}`", inline=False)
+            
+            result_view = DownloadResultView(short_link)
+            if is_guild:
+                await interaction.followup.send(content=short_link, embed=success_embed, view=result_view, ephemeral=True)
             else:
-                raise Exception("云端托管上传失败或功能未开启。 [错误代码: UPLOAD_FAILED]")
+                await interaction.followup.send(content=short_link, embed=success_embed, view=result_view)
 
         except Exception as e:
             TASK_STATUS["status"] = "error"
@@ -414,8 +301,8 @@ class DownloadView(discord.ui.View):
             TASK_STATUS["message"] = f"错误: {short_err}"
 
             err_embed = discord.Embed(
-                title="❌ 处理失败", 
-                description=f"请联系管理员回报问题\n* 错误摘要：`{short_err}`", 
+                title="❌ 任务派发失败", 
+                description=f"请检查 GITHUB_TOKEN 权限或仓库设定\n* 错误摘要：`{short_err}`", 
                 color=discord.Color.red()
             )
             try:
@@ -426,14 +313,9 @@ class DownloadView(discord.ui.View):
             except:
                 pass
         finally:
-            if self.downloaded_file_path and os.path.exists(self.downloaded_file_path):
-                try:
-                    os.remove(self.downloaded_file_path)
-                except:
-                    pass
             self.stop()
 
-    @discord.ui.button(label="🎬 最高画质影片", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="🎬 最高画质影片 (云端转码)", style=discord.ButtonStyle.primary, row=0)
     async def best_video_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.start_download(interaction=interaction, mode_text="最高画质影片", is_mp3=False)
 
@@ -467,12 +349,12 @@ async def download_message_context(interaction: discord.Interaction, message: di
         await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: TK_DISABLED]", ephemeral=True)
         return
 
-    menu_embed = discord.Embed(title="🔍 云端下载服务已就绪", description="* 点击下方按钮将自动进行下载。", color=discord.Color.blurple())
+    menu_embed = discord.Embed(title="🔍 云端下载服务已就绪", description="* 点击下方按钮将呼叫 GitHub Actions 云端下载。", color=discord.Color.blurple())
     menu_embed.add_field(name="🔗 目标网址", value=url, inline=False)
     view = DownloadView(url=url)
     await interaction.response.send_message(embed=menu_embed, view=view, ephemeral=True)
 
-@bot.tree.command(name="download", description="输入 YouTube / TikTok / B站 等影音网址，取得专属下载链接")
+@bot.tree.command(name="download", description="输入 YouTube / TikTok / B站 等影音网址，透过 GitHub 云端取得下载链接")
 @app_commands.describe(url="请输入 YouTube / TikTok / B站 媒体网址")
 async def download_slash(interaction: discord.Interaction, url: str):
     if interaction.guild and interaction.guild.id in DISABLED_GUILDS:
@@ -497,7 +379,7 @@ async def download_slash(interaction: discord.Interaction, url: str):
         await interaction.response.send_message("❌ 请联系管理员回报问题 [错误代码: TK_DISABLED]", ephemeral=True)
         return
 
-    menu_embed = discord.Embed(title="🔍 云端下载服务已就绪", description="* 点击下方按钮将自动进行下载。", color=discord.Color.blurple())
+    menu_embed = discord.Embed(title="🔍 云端下载服务已就绪", description="* 点击下方按钮将呼叫 GitHub Actions 云端下载。", color=discord.Color.blurple())
     menu_embed.add_field(name="🔗 目标网址", value=url, inline=False)
     view = DownloadView(url=url)
     await interaction.response.send_message(embed=menu_embed, view=view, ephemeral=True)
