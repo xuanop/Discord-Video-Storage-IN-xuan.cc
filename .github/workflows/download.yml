@@ -25,15 +25,22 @@ jobs:
           sudo apt-get update && sudo apt-get install -y ffmpeg
           pip install --upgrade yt-dlp requests
 
-      - name: 执行 yt-dlp 云端下载与无损合流
+      - name: 执行 yt-dlp 云端下载与 H.264 重新编码
         run: |
           python -c "
           import yt_dlp, os
           url = '${{ github.event.inputs.video_url }}'
           ydl_opts = {
-              'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-              'merge_output_format': 'mp4',
+              'format': 'bestvideo[height<=1080][fps>=59]+bestaudio/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
+              'postprocessors': [{
+                  'key': 'FFmpegVideoConvertor',
+                  'preferedformat': 'mp4',
+              }],
+              'postprocessor_args': {
+                  'ffmpeg': ['-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p']
+              },
               'outtmpl': 'downloads/%(title)s.%(ext)s',
+              'ffmpeg_args': ['-y'],
           }
           with yt_dlp.YoutubeDL(ydl_opts) as ydl:
               info = ydl.extract_info(url, download=True)
