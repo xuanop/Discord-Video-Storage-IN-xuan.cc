@@ -20,7 +20,6 @@ on:
         required: true
         type: string
 
-# 防止并发运行导致资源冲突或 Discord 回调混淆，新的触发会自动取消正在排队的旧任务
 concurrency:
   group: download-${{ github.event.inputs.interaction_token }}
   cancel-in-progress: true
@@ -40,14 +39,15 @@ jobs:
       - name: Install system and python dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
-          # 强制更新 yt-dlp 到最新版本，规避 HTTP 412/403 反爬风控
           pip install --upgrade --no-cache-dir yt-dlp
 
       - name: Download media using yt-dlp
+        id: download_step
         run: |
           python3 -c "
           import yt_dlp
           import glob
+          import sys
 
           url = '${{ github.event.inputs.video_url }}'
           target_file = '${{ github.event.inputs.file_name }}'
@@ -70,19 +70,25 @@ jobs:
               ydl_opts['format'] = 'bestvideo+bestaudio/best'
               ydl_opts['merge_output_format'] = 'mp4'
 
-          with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-              ydl.download([url])
+          try:
+              with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                  ydl.download([url])
 
-          files = glob.glob('downloaded_file*')
-          if files:
-              import shutil
-              shutil.move(files[0], target_file)
-              print(f'Successfully prepared file: {target_file}')
-          else:
-              raise Exception('Download failed: No output file found.')
+              files = glob.glob('downloaded_file*')
+              if files:
+                  import shutil
+                  shutil.move(files[0], target_file)
+                  print(f'Successfully prepared file: {target_file}')
+              else:
+                  print('Error: No output file found.', file=sys.stderr)
+                  sys.exit(1)
+          except Exception as e:
+              print(f'Download Error: {e}', file=sys.stderr)
+              sys.exit(1)
           "
 
       - name: Upload to GitHub Release
+        id: release_step
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.0
@@ -91,25 +97,39 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update Discord Interaction Message
+      - name: Update Discord Interaction Message (Result)
         if: always()
+        env:
+          APP_ID: ${{ github.event.inputs.application_id }}
+          TOKEN: ${{ github.event.inputs.interaction_token }}
+          FILE_NAME: ${{ github.event.inputs.file_name }}
+          REPO: ${{ github.repository }}
+          DOWNLOAD_STATUS: ${{ steps.download_step.outcome }}
+          RELEASE_STATUS: ${{ steps.release_step.outcome }}
         run: |
           python3 -c "
           import os, urllib.request, json
 
-          app_id = '${{ github.event.inputs.application_id }}'
-          token = '${{ github.event.inputs.interaction_token }}'
-          file_name = '${{ github.event.inputs.file_name }}'
-          repo = '${{ github.repository }}'
-
-          direct_url = f'https://github.com/{repo}/releases/download/v1.0.0/{file_name}'
+          app_id = os.environ['APP_ID']
+          token = os.environ['TOKEN']
+          file_name = os.environ['FILE_NAME']
+          repo = os.environ['REPO']
           
-          # 构造回调修改消息内容
-          payload = {
-              'content': f'✅ **下载已完成！**\n\n📥 [点击下载文件]({direct_url})'
-          }
+          download_status = os.environ['DOWNLOAD_STATUS']
+          release_status = os.environ['RELEASE_STATUS']
 
           url = f'https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original'
+
+          if download_status == 'success' and release_status == 'success':
+              direct_url = f'https://github.com/{repo}/releases/download/v1.0.0/{file_name}'
+              payload = {
+                  'content': f'✅ **视频下载并打包完成！**\n\n📥 [点击下载文件]({direct_url})'
+              }
+          else:
+              payload = {
+                  'content': f'❌ **下载或处理失败！**\n可能原因：链接无效、视频受版权/地区限制、或平台触发了反爬风控。'
+              }
+
           req = urllib.request.Request(
               url, 
               data=json.dumps(payload).encode('utf-8'), 
