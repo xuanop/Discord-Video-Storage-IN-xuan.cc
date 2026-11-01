@@ -41,6 +41,10 @@ jobs:
           sudo apt-get update && sudo apt-get install -y ffmpeg
           pip install --upgrade --no-cache-dir yt-dlp
 
+      - name: Make Cookies File from Secrets
+        run: |
+          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+
       - name: Download media using yt-dlp
         id: download_step
         run: |
@@ -57,6 +61,7 @@ jobs:
               'outtmpl': 'downloaded_file',
               'socket_timeout': 30,
               'geo_bypass': True,
+              'cookiefile': 'cookies.txt',
           }
 
           if ext == 'mp3':
@@ -127,7 +132,7 @@ jobs:
               }
           else:
               payload = {
-                  'content': f'❌ **下载或处理失败！**\n可能原因：链接无效、视频受版权/地区限制、或平台触发了反爬风控。'
+                  'content': f'❌ **下载或处理失败！**\n可能原因：Cookie 失效、链接错误、或平台触发了反爬验证。'
               }
 
           req = urllib.request.Request(
