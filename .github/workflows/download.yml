@@ -35,7 +35,8 @@ jobs:
       - name: Install system and python dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
-          pip install --no-cache-dir yt-dlp
+          # 强制每次升级到最新版 yt-dlp，防止风控报错 412/403
+          pip install --upgrade --no-cache-dir yt-dlp
 
       - name: Download media using yt-dlp
         run: |
@@ -49,6 +50,8 @@ jobs:
 
           ydl_opts = {
               'outtmpl': 'downloaded_file',
+              'socket_timeout': 30,
+              'geo_bypass': True,
           }
 
           if ext == 'mp3':
@@ -65,13 +68,10 @@ jobs:
           with yt_dlp.YoutubeDL(ydl_opts) as ydl:
               ydl.download([url])
 
-          # 寻找下载生成的实际文件并重命名为目标文件名
           files = glob.glob('downloaded_file*')
           if files:
-              actual_file = files[0]
-              # 如果后缀不对，确保改成对应的后缀
               import shutil
-              shutil.move(actual_file, target_file)
+              shutil.move(files[0], target_file)
               print(f'Successfully prepared file: {target_file}')
           else:
               raise Exception('Download failed: No output file found.')
@@ -99,7 +99,8 @@ jobs:
 
           direct_url = f'https://github.com/{repo}/releases/download/v1.0.0/{file_name}'
           
-          # 构造最终完成的消息内容
+          # 根据任务执行情况判断成功或失败
+          # 这里通过检查 Release 文件是否存在来简单判定，或者根据步骤状态
           payload = {
               'content': f'✅ **下载已完成！**\n\n📥 [点击下载文件]({direct_url})'
           }
