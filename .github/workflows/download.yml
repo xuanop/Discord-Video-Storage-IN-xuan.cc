@@ -24,12 +24,14 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 安装 yt-dlp 与 ffmpeg
+      - name: 强制安装并检查 FFmpeg
         run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
           pip install --upgrade yt-dlp requests
 
-      - name: 执行 yt-dlp 云端下载与 H.264 重新编码
+      - name: 执行 yt-dlp 云端下载与最高画质 H.264 转码
         run: |
           python -c "
           import yt_dlp, os
@@ -38,7 +40,7 @@ jobs:
           os.makedirs('downloads', exist_ok=True)
           
           ydl_opts = {
-              'format': 'bestvideo[height<=1080][fps>=59]+bestaudio/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
+              'format': 'bestvideo+bestaudio/best',
               'postprocessors': [{
                   'key': 'FFmpegVideoConvertor',
                   'preferedformat': 'mp4',
@@ -53,7 +55,7 @@ jobs:
               ydl.download([url])
           "
 
-      - name: 清理旧版本同名资产并上传新文件
+      - name: 上传文件至 GitHub Releases
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v1.0.0
