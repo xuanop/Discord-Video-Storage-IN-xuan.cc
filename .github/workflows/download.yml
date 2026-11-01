@@ -31,7 +31,11 @@ jobs:
           ffmpeg -version
           pip install --upgrade yt-dlp requests
 
-      - name: 执行 yt-dlp 云端下载与最高画质 H.264 转码
+      - name: 写入 Bilibili Cookie
+        run: |
+          echo "${{ secrets.BILI_COOKIE }}" > bili_cookies.txt
+
+      - name: 执行 yt-dlp 云端下载与 H.264 重新编码
         run: |
           python -c "
           import yt_dlp, os
@@ -41,6 +45,7 @@ jobs:
           
           ydl_opts = {
               'format': 'bestvideo+bestaudio/best',
+              'cookiefile': 'bili_cookies.txt',
               'postprocessors': [{
                   'key': 'FFmpegVideoConvertor',
                   'preferedformat': 'mp4',
@@ -50,6 +55,10 @@ jobs:
               },
               'outtmpl': os.path.join('downloads', filename),
               'ffmpeg_args': ['-y'],
+              'http_headers': {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                  'Referer': 'https://www.bilibili.com',
+              }
           }
           with yt_dlp.YoutubeDL(ydl_opts) as ydl:
               ydl.download([url])
