@@ -1,14 +1,22 @@
-name: Cloud Video Downloader
+name: Download Media and Notify Discord
 
 on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: '请输入要下载的视频网址'
+        description: 'Video URL to download'
         required: true
         type: string
       file_name:
-        description: '指定保存的文件名'
+        description: 'Target file name'
+        required: true
+        type: string
+      interaction_token:
+        description: 'Discord Interaction Token'
+        required: true
+        type: string
+      application_id:
+        description: 'Discord Application ID'
         required: true
         type: string
 
@@ -16,81 +24,100 @@ jobs:
   download-and-release:
     runs-on: ubuntu-latest
     steps:
-      - name: 检出代码仓库
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: 设置 Python 环境
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: 安装并验证 FFmpeg
+      - name: Install system and python dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          ffmpeg -version
-          pip install --upgrade yt-dlp requests
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install --no-cache-dir yt-dlp
 
-      - name: 写入完整的 Netscape Cookie
+      - name: Download media using yt-dlp
         run: |
-          echo "${{ secrets.BILI_COOKIE }}" > bili_cookies.txt
+          python3 -c "
+          import yt_dlp
+          import glob
 
-      - name: 执行 yt-dlp 云端智能下载与转码
-        run: |
-          python -c "
-          import yt_dlp, os
           url = '${{ github.event.inputs.video_url }}'
-          filename = '${{ github.event.inputs.file_name }}'
-          os.makedirs('downloads', exist_ok=True)
-          
-          is_mp3 = filename.endswith('.mp3')
-          
-          if is_mp3:
-              # MP3 最高音质提取模式
-              ydl_opts = {
-                  'format': 'bestaudio/best',
-                  'cookiefile': 'bili_cookies.txt',
-                  'postprocessors': [{
-                      'key': 'FFmpegExtractAudio',
-                      'preferredcodec': 'mp3',
-                      'preferredquality': '320',
-                  }],
-                  'outtmpl': os.path.join('downloads', filename.replace('.mp3', '')),
-              }
-          else:
-              # MP4 最高画质原画合流模式
-              ydl_opts = {
-                  'format': 'bestvideo+bestaudio/best',
-                  'cookiefile': 'bili_cookies.txt',
-                  'merge_output_format': 'mp4',
-                  'postprocessors': [{
-                      'key': 'FFmpegVideoConvertor',
-                      'preferedformat': 'mp4',
-                  }],
-                  'postprocessor_args': {
-                      'ffmpeg': ['-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p', '-crf', '18']
-                  },
-                  'outtmpl': os.path.join('downloads', filename),
-              }
+          target_file = '${{ github.event.inputs.file_name }}'
+          ext = target_file.split('.')[-1]
 
-          ydl_opts.update({
-              'ffmpeg_args': ['-y'],
-              'http_headers': {
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                  'Referer': 'https://www.bilibili.com',
-                  'Accept-Language': 'zh-CN,zh;q=0.9',
-              }
-          })
+          ydl_opts = {
+              'outtmpl': 'downloaded_file',
+          }
+
+          if ext == 'mp3':
+              ydl_opts['format'] = 'bestaudio/best'
+              ydl_opts['postprocessors'] = [{
+                  'key': 'FFmpegExtractAudio',
+                  'preferredcodec': 'mp3',
+                  'preferredquality': '192',
+              }]
+          else:
+              ydl_opts['format'] = 'bestvideo+bestaudio/best'
+              ydl_opts['merge_output_format'] = 'mp4'
 
           with yt_dlp.YoutubeDL(ydl_opts) as ydl:
               ydl.download([url])
+
+          # 寻找下载生成的实际文件并重命名为目标文件名
+          files = glob.glob('downloaded_file*')
+          if files:
+              actual_file = files[0]
+              # 如果后缀不对，确保改成对应的后缀
+              import shutil
+              shutil.move(actual_file, target_file)
+              print(f'Successfully prepared file: {target_file}')
+          else:
+              raise Exception('Download failed: No output file found.')
           "
 
-      - name: 上传文件至 GitHub Releases
-        uses: softprops/action-gh-release@v1
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.0
-          files: downloads/*
+          files: ${{ github.event.inputs.file_name }}
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Discord Interaction Message
+        if: always()
+        run: |
+          python3 -c "
+          import os, urllib.request, json
+
+          app_id = '${{ github.event.inputs.application_id }}'
+          token = '${{ github.event.inputs.interaction_token }}'
+          file_name = '${{ github.event.inputs.file_name }}'
+          repo = '${{ github.repository }}'
+
+          direct_url = f'https://github.com/{repo}/releases/download/v1.0.0/{file_name}'
+          
+          # 构造最终完成的消息内容
+          payload = {
+              'content': f'✅ **下载已完成！**\n\n📥 [点击下载文件]({direct_url})'
+          }
+
+          url = f'https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original'
+          req = urllib.request.Request(
+              url, 
+              data=json.dumps(payload).encode('utf-8'), 
+              headers={
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'DiscordBot'
+              }, 
+              method='PATCH'
+          )
+
+          try:
+              with urllib.request.urlopen(req) as response:
+                  print('Successfully updated Discord message:', response.read().decode())
+          except Exception as e:
+              print('Failed to update Discord message:', e)
+          "
