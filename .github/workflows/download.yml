@@ -1,0 +1,51 @@
+name: Cloud Video Downloader
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: '请输入要下载的视频网址'
+        required: true
+        type: string
+
+jobs:
+  download-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 安装 yt-dlp 与 ffmpeg
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install --upgrade yt-dlp requests
+
+      - name: 执行 yt-dlp 云端下载与无损合流
+        run: |
+          python -c "
+          import yt_dlp, os
+          url = '${{ github.event.inputs.video_url }}'
+          ydl_opts = {
+              'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+              'merge_output_format': 'mp4',
+              'outtmpl': 'downloads/%(title)s.%(ext)s',
+          }
+          with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+              info = ydl.extract_info(url, download=True)
+              filename = ydl.prepare_filename(info)
+              base, _ = os.path.splitext(filename)
+              print(f'DOWNLOADED_FILE={base}.mp4')
+          "
+
+      - name: 上传文件至 GitHub Releases
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.0.0
+          files: downloads/*.mp4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
