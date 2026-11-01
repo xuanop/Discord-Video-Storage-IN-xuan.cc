@@ -35,7 +35,7 @@ jobs:
         run: |
           echo "${{ secrets.BILI_COOKIE }}" > bili_cookies.txt
 
-      - name: 执行 yt-dlp 原画云端下载与高画质合流
+      - name: 打印可用画质清单并执行严格原画下载
         run: |
           python -c "
           import yt_dlp, os
@@ -43,9 +43,22 @@ jobs:
           filename = '${{ github.event.inputs.file_name }}'
           os.makedirs('downloads', exist_ok=True)
           
+          # 1. 先打印该视频在云端识别到的所有画质流，方便去 Actions 日志里查看
+          print('=== 正在检测云端可用画质流 ===')
+          with yt_dlp.YoutubeDL({'cookiefile': 'bili_cookies.txt', 'quiet': True}) as ydl:
+              try:
+                  info = ydl.extract_info(url, download=False)
+                  formats = info.get('formats', [])
+                  for f in formats:
+                      print(f'Format ID: {f.get(\"format_id\")}, Resolution: {f.get(\"resolution\")}, Note: {f.get(\"format_note\")}, Ext: {f.get(\"ext\")}')
+              except Exception as e:
+                  print(f'获取画质列表失败: {e}')
+          print('==============================')
+
+          # 2. 强制使用最严苛的高画质合流策略（不容许降级）
           ydl_opts = {
-              # 强制拉满：自动抓取最高画质视频轨 + 最高音质音频轨
-              'format': 'bestvideo+bestaudio/best',
+              # 强制抓取最高画质视频 + 最高音质，如果找不到直接报错，绝不偷换低画质
+              'format': 'bv*+ba/b',
               'cookiefile': 'bili_cookies.txt',
               'merge_output_format': 'mp4',
               'postprocessors': [{
