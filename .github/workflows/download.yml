@@ -31,9 +31,10 @@ jobs:
           ffmpeg -version
           pip install --upgrade yt-dlp requests
 
-      - name: 写入 Bilibili Cookie
+      - name: 写入并修复 Bilibili Cookie 格式
         run: |
-          echo "${{ secrets.BILI_COOKIE }}" > bili_cookies.txt
+          echo "# Netscape HTTP Cookie File" > bili_cookies.txt
+          echo ".bilibili.com	TRUE	/	TRUE	2147483647	SESSDATA	${{ secrets.BILI_COOKIE }}" >> bili_cookies.txt
 
       - name: 执行 yt-dlp 原画云端下载与高画质合流
         run: |
