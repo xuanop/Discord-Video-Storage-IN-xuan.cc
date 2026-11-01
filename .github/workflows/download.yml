@@ -34,7 +34,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11' # 升级到 3.11 消除警告
 
       - name: Install system and python dependencies
         run: |
@@ -43,7 +43,8 @@ jobs:
 
       - name: Make Cookies File from Secrets
         run: |
-          echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+          # 写入前清理可能存在的首尾空白符或引号
+          echo "${{ secrets.YT_COOKIES }}" | sed 's/^[ \t]*//;s/[ \t]*$//' > cookies.txt
 
       - name: Download media using yt-dlp
         id: download_step
@@ -132,7 +133,7 @@ jobs:
               }
           else:
               payload = {
-                  'content': f'❌ **下载或处理失败！**\n可能原因：Cookie 失效、链接错误、或平台触发了反爬验证。'
+                  'content': f'❌ **下载或处理失败！**\n可能原因：Cookie 格式错误、链接失效、或平台触发了反爬验证。'
               }
 
           req = urllib.request.Request(
