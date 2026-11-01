@@ -20,6 +20,11 @@ on:
         required: true
         type: string
 
+# 防止并发运行导致资源冲突或 Discord 回调混淆，新的触发会自动取消正在排队的旧任务
+concurrency:
+  group: download-${{ github.event.inputs.interaction_token }}
+  cancel-in-progress: true
+
 jobs:
   download-and-release:
     runs-on: ubuntu-latest
@@ -35,7 +40,7 @@ jobs:
       - name: Install system and python dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
-          # 强制每次升级到最新版 yt-dlp，防止风控报错 412/403
+          # 强制更新 yt-dlp 到最新版本，规避 HTTP 412/403 反爬风控
           pip install --upgrade --no-cache-dir yt-dlp
 
       - name: Download media using yt-dlp
@@ -99,8 +104,7 @@ jobs:
 
           direct_url = f'https://github.com/{repo}/releases/download/v1.0.0/{file_name}'
           
-          # 根据任务执行情况判断成功或失败
-          # 这里通过检查 Release 文件是否存在来简单判定，或者根据步骤状态
+          # 构造回调修改消息内容
           payload = {
               'content': f'✅ **下载已完成！**\n\n📥 [点击下载文件]({direct_url})'
           }
